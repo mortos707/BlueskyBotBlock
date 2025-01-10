@@ -1,0 +1,12 @@
+BEGIN TRANSACTION;
+DROP TABLE IF EXISTS "B3";
+CREATE TABLE IF NOT EXISTS "B3" (
+	"rec_num"	INTEGER,
+	"name"	TEXT,
+	"status"	TEXT,
+	"block"	TEXT,
+	"active"	TEXT,
+	"group"	TEXT,
+	PRIMARY KEY("rec_num" AUTOINCREMENT)
+);
+COMMIT;
