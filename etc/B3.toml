@@ -1,0 +1,8 @@
+#
+# config file for B3.py
+#
+
+[base]
+  tableName = "B3"
+  defaultB3Link = "https://redwoodempire.org/B3/latest.json"
+  dbFileName = "B3.sqlite"

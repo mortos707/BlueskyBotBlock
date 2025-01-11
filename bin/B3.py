@@ -1,14 +1,22 @@
-
 #!/usr/bin/env python3
+# -*- mode: python -*-
+# -*- coding: utf-8 -*-
 
 # B3 - BlueSky Bot Block
+
+# @depends: boto3, python (>=3.7)
+__version__ = '0.1'
+__author__ = 'jgrosch@gmail.com'
+__description__ = ""
+
 
 import os, sys
 import json
 import requests
+import toml
 import sqlite3 as S3
-from atproto import Client, models
-from atproto.exceptions import BadRequestError
+#from atproto import Client, models
+#from atproto.exceptions import BadRequestError
 
 
 # --------------------------------------------------------------------
@@ -17,18 +25,17 @@ from atproto.exceptions import BadRequestError
 #
 # --------------------------------------------------------------------
 def main():
-    baseDir = os.environ['PWD']
-
-    pDict = {}
+    pDict = getEnvironVars()
+    pDict['S3'] = S3
     
-    pDict['inLink']    = 'https://redwoodempire.org/B3/latest.json'
-    pDict['baseDir']   = os.environ['PWD']
-    pDict['B3DB']      = f"{pDict['baseDir']}/../data/B3.sqlite"
-    pDict['S3']        = S3
-    pDict['tableName'] = 'B3'
-
-    blueSkyLogin  = os.environ['blueSkyLogin']
-    blueSkyPasswd = os.environ['blueSkyPasswd']
+    #baseDir = os.environ['PWD']
+    #pDict = {}
+    #pDict['inLink']    = 'https://redwoodempire.org/B3/latest.json'
+    #pDict['baseDir']   = os.environ['PWD']
+    #pDict['B3DB']      = f"{pDict['baseDir']}/../data/B3.sqlite"
+    #pDict['tableName'] = 'B3'
+    #blueSkyLogin  = os.environ['blueSkyLogin']
+    #blueSkyPasswd = os.environ['blueSkyPasswd']
 
     debug   = False
     doCheck = False
@@ -40,7 +47,7 @@ def main():
 
     if doPull:
         try:
-            r = requests.get(pDict['inLink'])
+            r = requests.get(pDict['defaultB3Link'])
             if r.status_code != 200:
                 print(f"Error: {inLink} not found")
                 sys.exit(1)
@@ -48,9 +55,9 @@ def main():
                 jObj = r.json()
                 pDict['jObj'] = jObj
         except (ConnectionError) as e:
-        BP = 0
+            BP = 0
 
-        Blocks = jObj['blocks']
+        pDict['Blocks'] = jObj['blocks']
         loadDB(pDict)
 
     if doCheck:
@@ -103,6 +110,11 @@ def defineME(me):
     return ME
     #
 
+# --------------------------------------------------------------------
+#
+# defineME
+#
+# --------------------------------------------------------------------
 def defineB3(res):
 
     return defineME(res)
@@ -115,7 +127,7 @@ def defineB3(res):
 # --------------------------------------------------------------------
 def loadDB(pDict):
     jObj      = pDict['jObj']
-    dbFile    = pDict['B3DB']
+    dbFile    = pDict['DB_FILE']
     S3        = pDict['S3']
     tableName = pDict['tableName']
     
@@ -188,7 +200,45 @@ def loadDB(pDict):
 
     return
     #
+
+# --------------------------------------------------------------------
+#
+# getEnvironVars
+#
+# --------------------------------------------------------------------
+def getEnvironVars():
+    eDict = {}
+
+    eDict['baseDir'] = os.environ['PWD']
+    eDict['B3_HOME'] = os.environ.get('B3_HOME', eDict['baseDir'])
+
+    eDict['DB_PATH'] = f"{eDict['baseDir']}/../data"
+    eDict['B3_CONFIG_PATH'] = f"{eDict['B3_HOME']}/../etc" #/B3.toml"
+    eDict['B3_CONFIG_FILE'] = f"{eDict['B3_CONFIG_PATH']}/B3.toml"
     
+    eDict['blueSkyLogin']  = os.environ.get('blueSkyLogin', '')
+    eDict['blueSkyPasswd'] = os.environ.get('blueSkyPasswd', '')
+    
+    #eDict['B3_CONFIG'] = f"{eDict['B3_CONFIG_PATH']}/B3.toml"
+    if os.path.exists(eDict['B3_CONFIG_FILE']):
+        with open(eDict['B3_CONFIG_FILE'], 'r') as fh:
+            Lines = fh.read()
+
+        cDict = toml.loads(Lines)
+        Base = cDict['base']
+        for key in Base:
+            value = Base[key]
+            eDict[key] = value
+
+        eDict['cDict'] = cDict
+        eDict['DB_FILE'] = f"{eDict['DB_PATH']}/{eDict['dbFileName']}" 
+    else:
+        eDict['cDict'] = {}
+
+        
+    return eDict
+    # End of getEnvironVars
+
 # --------------------------------------------------------------------
 #
 # entry point
