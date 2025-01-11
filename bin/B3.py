@@ -13,10 +13,11 @@ __description__ = ""
 import os, sys
 import json
 import requests
+import argparse
 import toml
 import sqlite3 as S3
-#from atproto import Client, models
-#from atproto.exceptions import BadRequestError
+from atproto import Client, models
+from atproto.exceptions import BadRequestError
 
 
 # --------------------------------------------------------------------
@@ -37,14 +38,32 @@ def main():
     #blueSkyLogin  = os.environ['blueSkyLogin']
     #blueSkyPasswd = os.environ['blueSkyPasswd']
 
-    debug   = False
-    doCheck = False
-    doPull  = True
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--debug', help='Turn on debug messages',
+                        action='store_true')
+
+    parser.add_argument('--docheck', help='Check handles against Bluesky',
+                        action='store_true')
+
+    parser.add_argument('--dopull', help='Pull block list from SOA',
+                        action='store_true')
+
+    parser.add_argument('--verbose', help='Turn on verbose output',
+                        action='store_true')
+
+    args = parser.parse_args()
+  
+    debug   = args.debug
+    doCheck = args.docheck
+    doPull  = args.dopull
+    verbose = args.verbose
     
     notFoundList = []
     foundList    = []
     jObj = ''
 
+    # pull the latest block list from the master
     if doPull:
         try:
             r = requests.get(pDict['defaultB3Link'])
@@ -60,34 +79,41 @@ def main():
         pDict['Blocks'] = jObj['blocks']
         loadDB(pDict)
 
+    # Check the DB against Bluesky
+    BP = 0
     if doCheck:
+        blueSkyLogin  = pDict['blueSkyLogin']
+        blueSkyPasswd = pDict['blueSkyPasswd']
+        
         client = Client()
         client.login(blueSkyLogin, blueSkyPasswd)
 
-    for key in Blocks:
-        BL = Blocks[key]
-        for entry in BL:
-            name = entry.strip()
-            if '@' in name:
-                name = name.replace('@', '')
-            try:
-                UD = client.get_profile(actor=name)
-            except (BadRequestError) as e:
+        for key in pDict['Blocks']:
+            BL = pDict['Blocks'][key]
+            for entry in BL:
+                name = entry.strip()
+                if '@' in name:
+                    name = name.replace('@', '')
+                try:
+                    UD = client.get_profile(actor=name)
+                except (BadRequestError) as e:
+                    BP = 0
+                    statusCode = e.response.status_code
+                    if statusCode == 400:
+                        notFoundList.append(name)
+                        if debug:
+                            print(f"Account: {name} NOT found")
+                        continue
                 BP = 0
-                statusCode = e.response.status_code
-                if statusCode == 400:
-                    notFoundList.append(name)
-                    if debug:
-                        print(f"Account: {name} NOT found")
-                    continue
-            BP = 0
-            ME = defineME(UD)
-            foundList.append(name)
-            if debug:
-                print(f"Account: {name} found")
-            # End of for loop
-        BP = 1
-
+                ME = defineME(UD)
+                foundList.append(name)
+                if debug:
+                    print(f"Account: {name} found")
+                # End of for loop
+            BP = 1
+        BP = 2
+    BP = 3
+    
     notFoundCount = len(notFoundList)
     foundCount    = len(foundList)
     accountTotal = notFoundCount + foundCount
