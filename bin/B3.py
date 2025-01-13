@@ -15,17 +15,12 @@ __description__ = ""
 __usage__ = ""
 __version__ = '0.1'
 
-
 import os, sys
 import json
 import requests
 import argparse
 import toml
 import sqlite3 as S3
-
-from atproto import Client, models
-from atproto.exceptions import BadRequestError
-
 
 # --------------------------------------------------------------------
 #
@@ -48,15 +43,6 @@ def main():
     pDict = rDict['data']
     pDict['S3'] = S3
     
-    #baseDir = os.environ['PWD']
-    #pDict = {}
-    #pDict['inLink']    = 'https://redwoodempire.org/B3/latest.json'
-    #pDict['baseDir']   = os.environ['PWD']
-    #pDict['B3DB']      = f"{pDict['baseDir']}/../data/B3.sqlite"
-    #pDict['tableName'] = 'B3'
-    #blueSkyLogin  = os.environ['blueSkyLogin']
-    #blueSkyPasswd = os.environ['blueSkyPasswd']
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--block', help='Pick a group(s) to block', nargs='+')
@@ -97,7 +83,7 @@ def main():
     jObj = ''
 
     # pull the latest block list from the master
-    if doPull:
+    if args.dopull:
         try:
             r = requests.get(pDict['defaultB3Link'])
             if r.status_code != 200:
@@ -112,6 +98,13 @@ def main():
         pDict['Blocks'] = jObj['blocks']
         loadDB(pDict)
 
+    BP = 0
+    if args.block or args.docheck: 
+        from atproto import Client, models
+        from atproto.exceptions import BadRequestError
+        
+    if args.block:
+        BP = 0
     # Check the DB against Bluesky
     BP = 0
     if doCheck:
@@ -159,19 +152,23 @@ def main():
 # defineB3
 #
 # --------------------------------------------------------------------
-def defineB3(me: dict) -> dict:
+def defineB3(result: dict) -> dict:
     """
     Args:
     Returns:
     """
     B3 = {}
-    for entry in me:
-        key   = entry[0]
-        value = entry[1]
-        ME[key] = value
+
+    FieldList = ["rec_num",    "account_name", "status",
+                 "block_name", "active",       "group"]
+    for index, key in enumerate(FieldList):
+        value = result[0][index]
+        if value is None:
+            value = ''
+        B3[key] = value
         
     return B3
-    #
+    # defineB3
     
 # --------------------------------------------------------------------
 #
@@ -193,13 +190,15 @@ def loadDB(pDict: dict):
     
     """
     CREATE TABLE IF NOT EXISTS 'B3' (
-	'rec_num'	INTEGER,
-	'name'	TEXT,
-	'status'	TEXT,
-	'block'	TEXT,
-	'active'	TEXT,
-	'group'	TEXT,
-	PRIMARY KEY('rec_num' AUTOINCREMENT)
+        'rec_num'       INTEGER, // record number
+        'date_time'     TEXT,    // datetime stamp 12-Jan-2024 21:14:00
+        'handle'        TEXT,    // handle to be blocked
+        'status'        TEXT,    // blockd, muted, removed ?
+        'block'         TEXT,    // block handle Y/N
+        'mute'          TEXT,    // mute handle Y/N
+        'active'        TEXT,    // is account active ?
+        'block_group'   TEXT,    // block group ; spammer, asshole, etc.
+        PRIMARY KEY('rec_num' AUTOINCREMENT)
     );
     """
 
@@ -258,12 +257,6 @@ def loadDB(pDict: dict):
                 block_name   = key
                 account_name = name
                 status       = 'block'
-                query2 = (" insert into B3 set "
-                          " account_name = '{}', "
-                          " status = '{}', "
-                          " block_name = '{}', "
-                          " active = '{}'; "
-                          .format(account_name, status, block_name, active))
                 
                 query3 = (" insert into B3 (account_name, status, block_name, "
                           " active) values ('{}', '{}', '{}', '{}'); "
@@ -275,7 +268,7 @@ def loadDB(pDict: dict):
                 BP = 5
             else:
                 Bp = 6
-                B3 = defineB3(handle)
+                B3 = defineB3(result)
             BP = 2
         BP = 3
     BP = 4
