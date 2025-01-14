@@ -21,6 +21,7 @@ import requests
 import argparse
 import toml
 import sqlite3 as S3
+import hashlib
 
 # --------------------------------------------------------------------
 #
@@ -28,37 +29,54 @@ import sqlite3 as S3
 #
 # --------------------------------------------------------------------
 def main():
-    BP = 0
+    RS = ReturnStatus
+    pDict = {}
+    pDict['S3'] = S3
     
     # The minimum version of python we support is 3.8
     min_python_version = (3, 8)
     if sys.version_info < min_python_version:
         print("Python %s.%s or later is required.\n" % min_python_version)
-        sys.exit(0)
+        sys.exit(RS.NOT_OK)
 
-    toolName = os.path.basename(__file__)
-    version  = __version__
+    toolName     = os.path.basename(__file__)
+    version      = __version__
+    notFoundList = []
+    foundList    = []
 
-    rDict = getEnvironVars()
-    pDict = rDict['data']
-    pDict['S3'] = S3
+    getEnvironVars(pDict)
+    initTool(pDict)
     
     parser = argparse.ArgumentParser()
+
+    """
+    parser.add_argument('--clear_db', help='Whipe the DB clean.',
+                        action='store_true')
+
+    parser.add_argument('--backup_db', help='Backup the DB.',
+                        action='store_true')
+    """
 
     parser.add_argument('--block', help='Pick a group(s) to block', nargs='+')
 
     parser.add_argument('--debug', help='Turn on debug messages',
                         action='store_true')
 
-    parser.add_argument('--docheck', help='Check handles against Bluesky',
+    parser.add_argument('--do_check', help='Check handles against Bluesky',
                         action='store_true')
 
-    parser.add_argument('--dopull', help='Pull block list from SOA',
+    parser.add_argument('--do_pull', help='Pull block list from SOA',
                         action='store_true')
 
-    parser.add_argument('--list', help='List block groups',
+    parser.add_argument('--list', help='List block categories',
                         action='store_true')
     
+    parser.add_argument('--mute', help='Pick a group(s) to mute', nargs='+')
+    
+    parser.add_argument('--unblock', help='Pick a group(s) to unblock', nargs='+')
+
+    parser.add_argument('--unmute', help='Pick a group(s) to unmute', nargs='+')
+
     parser.add_argument('--verbose', help='Turn on verbose output',
                         action='store_true')
 
@@ -67,30 +85,57 @@ def main():
 
     args = parser.parse_args()
     pDict['args'] = args
-
+    
+    #
     # Spit out the version
+    #
     if args.version:
         print(f"{toolName} - Version: {version}")
-        sys.exit(0)
+        sys.exit(RS.OK)
 
-    debug   = args.debug
-    doCheck = args.docheck
-    doPull  = args.dopull
-    verbose = args.verbose
-    
-    notFoundList = []
-    foundList    = []
-    jObj = ''
-
+    #
+    # List all the categories
+    #
+    if args.list:
+        blockNames = pDict['BlockNames']
+        print("\nDefined block categories")
+        for entry in blockNames:
+            print(f"    {entry}")
+        print("\n")
+        sys.exit(RS.OK)
+        
+    #
     # pull the latest block list from the master
-    if args.dopull:
+    #
+    if args.do_pull:
         try:
+            r = requests.get(pDict['defaultMD5HashLink'])
+            if r.status_code != 200:
+                print(f"Error: {inLink} not found")
+                sys.exit(RS.NOT_OK)
+            else:
+                tmpStr = r.text
+                bits = tmpStr.split()
+                fileMd5Hash = bits[0].strip()
+                
             r = requests.get(pDict['defaultB3Link'])
             if r.status_code != 200:
                 print(f"Error: {inLink} not found")
-                sys.exit(1)
+                sys.exit(RS.NOT_OK)
             else:
                 jObj = r.json()
+                xB3Str = r.text
+                md5Obj = hashlib.md5()
+                encodeStr = xB3Str.encode()
+                md5Obj.update(encodeStr)
+                md5Sum = md5Obj.hexdigest()
+
+                if md5Sum != fileMd5Hash:
+                    print("Error: file hash do not match")
+                    print(f"Hash #1: {md5Sum}")
+                    print(f"Hash #2: {fileMd5Hash}")
+                    sys.exit(RS.NOT_OK)
+                    
                 pDict['jObj'] = jObj
         except (ConnectionError) as e:
             BP = 0
@@ -99,7 +144,7 @@ def main():
         loadDB(pDict)
 
     BP = 0
-    if args.block or args.docheck: 
+    if args.block or args.do_check: 
         from atproto import Client, models
         from atproto.exceptions import BadRequestError
         
@@ -107,12 +152,23 @@ def main():
         BP = 0
     # Check the DB against Bluesky
     BP = 0
-    if doCheck:
+    if args.do_check:
         blueSkyLogin  = pDict['blueSkyLogin']
         blueSkyPasswd = pDict['blueSkyPasswd']
         
         client = Client()
         client.login(blueSkyLogin, blueSkyPasswd)
+
+        # TEST
+        a1 = client.app
+        a2 = client.app.bsky
+        a3 = client.app.bsky.graph
+        a4  = client.app.bsky.graph.block
+
+        # AppBskyGraphBlockRecord
+        
+        for entry in a4:
+            BP = 0
 
         for key in pDict['Blocks']:
             BL = pDict['Blocks'][key]
@@ -127,13 +183,13 @@ def main():
                     statusCode = e.response.status_code
                     if statusCode == 400:
                         notFoundList.append(name)
-                        if debug:
+                        if args.debug:
                             print(f"Account: {name} NOT found")
                         continue
                 BP = 0
                 B3 = defineB3(UD)
                 foundList.append(name)
-                if debug:
+                if args.debug:
                     print(f"Account: {name} found")
                 # End of for loop
             BP = 1
@@ -144,7 +200,7 @@ def main():
     foundCount    = len(foundList)
     accountTotal = notFoundCount + foundCount
     
-    sys.exit(0)
+    sys.exit(RS.OK)
     # End of main
 
 # --------------------------------------------------------------------
@@ -159,8 +215,7 @@ def defineB3(result: dict) -> dict:
     """
     B3 = {}
 
-    FieldList = ["rec_num",    "account_name", "status",
-                 "block_name", "active",       "group"]
+    FieldList = pDict['dbFieldList']
     for index, key in enumerate(FieldList):
         value = result[0][index]
         if value is None:
@@ -217,12 +272,16 @@ def loadDB(pDict: dict):
             # create table
 
             createSQL = (
+                
                 ' CREATE TABLE IF NOT EXISTS "B3" ( '
-                ' "rec_num"       INTEGER, '
-                ' "account_name"  TEXT, '
-                ' "status"        TEXT, '
-                ' "block_name"    TEXT, '
-                ' "active"        TEXT, '
+                " 'rec_num'       INTEGER, "
+                " 'date_time'     TEXT, "
+                " 'handle'        TEXT, "
+                " 'status'        TEXT, "
+                " 'block'         TEXT, "
+                " 'mute'          TEXT, "
+                " 'active'        TEXT, "
+                " 'block_group'   TEXT, "
                 ' PRIMARY KEY("rec_num" AUTOINCREMENT));')
 
             createSQLList = [" BEGIN TRANSACTION; ",
@@ -281,7 +340,7 @@ def loadDB(pDict: dict):
 # getEnvironVars
 #
 # --------------------------------------------------------------------
-def getEnvironVars():
+def getEnvironVars(pDict):
     """
     Args:
     Returns:
@@ -290,35 +349,33 @@ def getEnvironVars():
     RS = ReturnStatus
     rDict = genReturnDict("Inside getEnvironVars")
     
-    eDict = {}
+    pDict['baseDir'] = os.environ['PWD']
+    pDict['B3_HOME'] = os.environ.get('B3_HOME', pDict['baseDir'])
 
-    eDict['baseDir'] = os.environ['PWD']
-    eDict['B3_HOME'] = os.environ.get('B3_HOME', eDict['baseDir'])
-
-    eDict['DB_PATH'] = f"{eDict['baseDir']}/../data"
-    eDict['B3_CONFIG_PATH'] = f"{eDict['B3_HOME']}/../etc" #/B3.toml"
-    eDict['B3_CONFIG_FILE'] = f"{eDict['B3_CONFIG_PATH']}/B3.toml"
+    pDict['DB_PATH'] = f"{pDict['baseDir']}/../data"
+    pDict['B3_CONFIG_PATH'] = f"{pDict['B3_HOME']}/../etc" #/B3.toml"
+    pDict['B3_CONFIG_FILE'] = f"{pDict['B3_CONFIG_PATH']}/B3.toml"
     
-    eDict['blueSkyLogin']  = os.environ.get('blueSkyLogin', '')
-    eDict['blueSkyPasswd'] = os.environ.get('blueSkyPasswd', '')
+    pDict['blueSkyLogin']  = os.environ.get('blueSkyLogin', '')
+    pDict['blueSkyPasswd'] = os.environ.get('blueSkyPasswd', '')
     
-    #eDict['B3_CONFIG'] = f"{eDict['B3_CONFIG_PATH']}/B3.toml"
-    if os.path.exists(eDict['B3_CONFIG_FILE']):
-        with open(eDict['B3_CONFIG_FILE'], 'r') as fh:
+    #pDict['B3_CONFIG'] = f"{pDict['B3_CONFIG_PATH']}/B3.toml"
+    if os.path.exists(pDict['B3_CONFIG_FILE']):
+        with open(pDict['B3_CONFIG_FILE'], 'r') as fh:
             Lines = fh.read()
 
         cDict = toml.loads(Lines)
         Base = cDict['base']
         for key in Base:
             value = Base[key]
-            eDict[key] = value
+            pDict[key] = value
 
-        eDict['cDict'] = cDict
-        eDict['DB_FILE'] = f"{eDict['DB_PATH']}/{eDict['dbFileName']}" 
+        pDict['cDict'] = cDict
+        pDict['DB_FILE'] = f"{pDict['DB_PATH']}/{pDict['dbFileName']}" 
     else:
-        eDict['cDict'] = {}
+        pDict['cDict'] = {}
 
-    rDict['data'] = eDict
+    rDict['msg'] = 'Enviornment vars loaded'
     
     return rDict
     # End of getEnvironVars
@@ -417,6 +474,23 @@ class ReturnStatus:
     RESTRICTED = 9 #
     # End of class ReturnStatus
 
+# --------------------------------------------------------------------
+#
+# initTool
+#
+# --------------------------------------------------------------------
+def initTool(pDict):
+    pDict['dbFieldList'] = ["rec_num", "date_time", "handle",
+                            "status",  "block",     "mute",
+                            "active",  "block_group"]
+
+    pDict['BlockNames'] = ["crypto",   "jerk", "maga",
+                           "onlyfans", "other", "removed",
+                           "scammer"]
+
+    return
+    # End of initTool
+    
 # --------------------------------------------------------------------
 #
 # entry point

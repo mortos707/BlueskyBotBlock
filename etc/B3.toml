@@ -3,6 +3,8 @@
 #
 
 [base]
-  tableName = "B3"
-  defaultB3Link = "https://redwoodempire.org/B3/latest.json"
+  tableName  = "B3"
   dbFileName = "B3.sqlite"
+
+  defaultB3Link       = "https://redwoodempire.org/B3/latest.json"
+  defaultMD5HashLink  = "https://redwoodempire.org/B3/latest.md5sum"
