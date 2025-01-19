@@ -13,7 +13,7 @@ __author__ = 'jgrosch@gmail.com'
 __copyright__ = "Copyright (c) 2025 Josef Grosch"
 __description__ = ""
 __usage__ = ""
-__version__ = '0.1'
+__version__ = '0.2'
 
 import os, sys
 import json
@@ -22,6 +22,7 @@ import argparse
 import toml
 import sqlite3 as S3
 import hashlib
+import datetime.datetime
 
 # --------------------------------------------------------------------
 #
@@ -30,8 +31,6 @@ import hashlib
 # --------------------------------------------------------------------
 def main():
     RS = ReturnStatus
-    pDict = {}
-    pDict['S3'] = S3
     
     # The minimum version of python we support is 3.8
     min_python_version = (3, 8)
@@ -39,58 +38,19 @@ def main():
         print("Python %s.%s or later is required.\n" % min_python_version)
         sys.exit(RS.NOT_OK)
 
-    toolName     = os.path.basename(__file__)
-    version      = __version__
-    notFoundList = []
-    foundList    = []
-
-    getEnvironVars(pDict)
-    initTool(pDict)
+    #
+    # Setup tool and deal with the arguments
+    #
+    pDict = initTool()
     
-    parser = argparse.ArgumentParser()
-
-    """
-    parser.add_argument('--clear_db', help='Whipe the DB clean.',
-                        action='store_true')
-
-    parser.add_argument('--backup_db', help='Backup the DB.',
-                        action='store_true')
-    """
-
-    parser.add_argument('--block', help='Pick a group(s) to block', nargs='+')
-
-    parser.add_argument('--debug', help='Turn on debug messages',
-                        action='store_true')
-
-    parser.add_argument('--do_check', help='Check handles against Bluesky',
-                        action='store_true')
-
-    parser.add_argument('--do_pull', help='Pull block list from SOA',
-                        action='store_true')
-
-    parser.add_argument('--list', help='List block categories',
-                        action='store_true')
-    
-    parser.add_argument('--mute', help='Pick a group(s) to mute', nargs='+')
-    
-    parser.add_argument('--unblock', help='Pick a group(s) to unblock', nargs='+')
-
-    parser.add_argument('--unmute', help='Pick a group(s) to unmute', nargs='+')
-
-    parser.add_argument('--verbose', help='Turn on verbose output',
-                        action='store_true')
-
-    parser.add_argument('--version', help='Display the version',
-                        action='store_true')
-
-    args = parser.parse_args()
-    pDict['args'] = args
+    processArgs(pDict)
+    args = pDict['args']
     
     #
     # Spit out the version
     #
     if args.version:
-        print(f"{toolName} - Version: {version}")
+        print(f"{pDict['toolName']} - Version: {pDict['version']}")
         sys.exit(RS.OK)
 
     #
@@ -140,9 +100,15 @@ def main():
         except (ConnectionError) as e:
             BP = 0
 
-        pDict['Blocks'] = jObj['blocks']
-        loadDB(pDict)
-
+        pDict['Blocks']     = jObj['blocks']
+        pDict['latestDate'] = jObj['date']
+        
+        if args.update_db:
+            loadDB(pDict)
+        else:
+            saveToFile(pDict)
+            # End of else 
+        
     BP = 0
     if args.block or args.do_check: 
         from atproto import Client, models
@@ -244,17 +210,20 @@ def loadDB(pDict: dict):
     tableName = pDict['tableName']
     
     """
+    BEGIN TRANSACTION;
+    DROP TABLE IF EXISTS 'B3';
     CREATE TABLE IF NOT EXISTS 'B3' (
-        'rec_num'       INTEGER, // record number
-        'date_time'     TEXT,    // datetime stamp 12-Jan-2024 21:14:00
-        'handle'        TEXT,    // handle to be blocked
-        'status'        TEXT,    // blockd, muted, removed ?
-        'block'         TEXT,    // block handle Y/N
-        'mute'          TEXT,    // mute handle Y/N
-        'active'        TEXT,    // is account active ?
-        'block_group'   TEXT,    // block group ; spammer, asshole, etc.
-        PRIMARY KEY('rec_num' AUTOINCREMENT)
+           'rec_num'       INTEGER,
+           'date_time'     TEXT,
+           'handle'        TEXT,
+           'status'        TEXT,
+           'block'         TEXT,
+           'mute'          TEXT,
+           'active'        TEXT,
+           'block_group'   TEXT,
+           PRIMARY KEY('rec_num' AUTOINCREMENT)
     );
+    COMMIT;
     """
 
     try:
@@ -309,12 +278,12 @@ def loadDB(pDict: dict):
             name = entry.strip()
             if '@' in name:
                 name = name.replace('@', '')
-            query2 = f" select * from {tableName} where account_name = \'{name}\';"
+            query2 = f" select * from {tableName} where handle = \'{name}\';"
             result = cur.execute(query2).fetchall()
             if result == []:
                 # user not found
-                block_name   = key
-                account_name = name
+                block_group   = key
+                handle = name
                 status       = 'block'
                 
                 query3 = (" insert into B3 (account_name, status, block_name, "
@@ -346,38 +315,7 @@ def getEnvironVars(pDict):
     Returns:
     """
 
-    RS = ReturnStatus
-    rDict = genReturnDict("Inside getEnvironVars")
-    
-    pDict['baseDir'] = os.environ['PWD']
-    pDict['B3_HOME'] = os.environ.get('B3_HOME', pDict['baseDir'])
-
-    pDict['DB_PATH'] = f"{pDict['baseDir']}/../data"
-    pDict['B3_CONFIG_PATH'] = f"{pDict['B3_HOME']}/../etc" #/B3.toml"
-    pDict['B3_CONFIG_FILE'] = f"{pDict['B3_CONFIG_PATH']}/B3.toml"
-    
-    pDict['blueSkyLogin']  = os.environ.get('blueSkyLogin', '')
-    pDict['blueSkyPasswd'] = os.environ.get('blueSkyPasswd', '')
-    
-    #pDict['B3_CONFIG'] = f"{pDict['B3_CONFIG_PATH']}/B3.toml"
-    if os.path.exists(pDict['B3_CONFIG_FILE']):
-        with open(pDict['B3_CONFIG_FILE'], 'r') as fh:
-            Lines = fh.read()
-
-        cDict = toml.loads(Lines)
-        Base = cDict['base']
-        for key in Base:
-            value = Base[key]
-            pDict[key] = value
-
-        pDict['cDict'] = cDict
-        pDict['DB_FILE'] = f"{pDict['DB_PATH']}/{pDict['dbFileName']}" 
-    else:
-        pDict['cDict'] = {}
-
-    rDict['msg'] = 'Enviornment vars loaded'
-    
-    return rDict
+    return initTool(pDict)
     # End of getEnvironVars
 
 # --------------------------------------------------------------------
@@ -479,7 +417,21 @@ class ReturnStatus:
 # initTool
 #
 # --------------------------------------------------------------------
-def initTool(pDict):
+def initTool():
+    """
+    Args:
+    Returns:
+    """
+
+    RS = ReturnStatus
+    rDict = genReturnDict("Inside getEnvironVars")
+
+    pDict = {}
+
+    pDict['S3'] = S3
+    pDict['toolName'] = os.path.basename(__file__)
+    pDict['version'] = __version__
+
     pDict['dbFieldList'] = ["rec_num", "date_time", "handle",
                             "status",  "block",     "mute",
                             "active",  "block_group"]
@@ -487,10 +439,118 @@ def initTool(pDict):
     pDict['BlockNames'] = ["crypto",   "jerk", "maga",
                            "onlyfans", "other", "removed",
                            "scammer"]
+    
+    pDict['baseDir'] = os.environ['PWD']
+    pDict['B3_HOME'] = os.environ.get('B3_HOME', pDict['baseDir'])
+    if pDict['B3_HOME'].endswith('/bin'):
+        pDict['B3_HOME'] = pDict['B3_HOME'].replace('/bin', '')
+    
+    pDict['DB_PATH']   = f"{pDict['B3_HOME']}/data"
+    pDict['DATA_PATH'] = pDict['DB_PATH']
+    
+    pDict['B3_CONFIG_PATH'] = f"{pDict['B3_HOME']}/etc" #/B3.toml"
+    pDict['B3_CONFIG_FILE'] = f"{pDict['B3_CONFIG_PATH']}/B3.toml"
+    
+    pDict['blueSkyLogin']  = os.environ.get('blueSkyLogin', '')
+    pDict['blueSkyPasswd'] = os.environ.get('blueSkyPasswd', '')
+    
+    #pDict['B3_CONFIG'] = f"{pDict['B3_CONFIG_PATH']}/B3.toml"
+    if os.path.exists(pDict['B3_CONFIG_FILE']):
+        with open(pDict['B3_CONFIG_FILE'], 'r') as fh:
+            Lines = fh.read()
+
+        cDict = toml.loads(Lines)
+        Base = cDict['base']
+        for key in Base:
+            value = Base[key]
+            pDict[key] = value
+
+        pDict['cDict'] = cDict
+        pDict['DB_FILE'] = f"{pDict['DB_PATH']}/{pDict['dbFileName']}" 
+    else:
+        pDict['cDict'] = {}
+
+    rDict['msg'] = 'Enviornment vars loaded'
+
+    return pDict
+    # End of initTool
+
+# --------------------------------------------------------------------
+#
+# saveToFile
+#
+# --------------------------------------------------------------------
+def saveToFile(pDict):
+    """
+    Args:
+    Returns:
+    """
+    fixedDateStr = pDict['latestDate'].replace(' ', '-')
+    blockListFile = f"{pDict['DATA_PATH']}/B3BlockList.{fixedDateStr}.json"
+    outStr = json.dumps(pDict['Blocks'], indent=4)
+    with open(blockListFile, 'w') as fh:
+        fh.write(outStr)
+
+    md5Obj = hashlib.md5()
+    encodeStr = outStr.encode()
+    md5Obj.update(encodeStr)
+    md5Sum = md5Obj.hexdigest()
+    outStr = f"{md5Sum} B3BlockList.{fixedDateStr}.json\n"
+    md5sumFile = f"{pDict['DATA_PATH']}/B3BlockList.{fixedDateStr}.md5sum"
+    with open(md5sumFile, 'w') as fh:
+        fh.write(outStr)
 
     return
-    # End of initTool
+
+def processArgs(pDict):
+
+    """
+    Args:
+    Return:
+    """
     
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--clear_db', help='Whipe the DB clean.',
+                        action='store_true')
+
+    parser.add_argument('--backup_db', help='Backup the DB.',
+                        action='store_true')
+
+    parser.add_argument('--block', help='Pick a group(s) to block', nargs='+')
+
+    parser.add_argument('--debug', help='Turn on debug messages',
+                        action='store_true')
+
+    parser.add_argument('--do_check', help='Check handles against Bluesky',
+                        action='store_true')
+
+    parser.add_argument('--do_pull', help='Pull block list from SOA',
+                        action='store_true')
+
+    parser.add_argument('--list', help='List block categories',
+                        action='store_true')
+    
+    parser.add_argument('--mute', help='Pick a group(s) to mute', nargs='+')
+    
+    parser.add_argument('--unblock', help='Pick a group(s) to unblock', nargs='+')
+
+    parser.add_argument('--unmute', help='Pick a group(s) to unmute', nargs='+')
+
+    parser.add_argument('--update_db', help='Update DB with latest list',
+                        action='store_true')
+
+    parser.add_argument('--verbose', help='Turn on verbose output',
+                        action='store_true')
+
+    parser.add_argument('--version', help='Display the version',
+                        action='store_true')
+
+    args = parser.parse_args()
+    pDict['args'] = args
+
+    return
+
 # --------------------------------------------------------------------
 #
 # entry point
