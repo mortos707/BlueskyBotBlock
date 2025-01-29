@@ -16,13 +16,23 @@ __usage__ = ""
 __version__ = '0.2'
 
 import os, sys
+
+script_dir = os.path.dirname( __file__ )
+mymodule_dir = os.path.join( script_dir, '..', 'lib' )
+sys.path.append( mymodule_dir )
+
+import bbblib
+
 import json
 import requests
 import argparse
 import toml
 import sqlite3 as S3
 import hashlib
-import datetime.datetime
+import datetime
+
+from atproto import Client, models
+from atproto.exceptions import BadRequestError
 
 # --------------------------------------------------------------------
 #
@@ -30,7 +40,13 @@ import datetime.datetime
 #
 # --------------------------------------------------------------------
 def main():
-    RS = ReturnStatus
+    """
+    
+    https://public.api.bsky.app/
+
+    """
+    
+    RS = bbblib.ReturnStatus
     
     # The minimum version of python we support is 3.8
     min_python_version = (3, 8)
@@ -42,10 +58,20 @@ def main():
     # Setup tool and deal with the arguments
     #
     pDict = initTool()
+
+    #
+    # User info @BlueSky
+    #
+    getUserInfo(pDict)
     
-    processArgs(pDict)
-    args = pDict['args']
-    
+    rDict = processArgs(pDict)
+    if rDict['status'] == RS.NOT_FOUND:
+        parser = pDict['parser']
+        parser.print_help()
+        sys.exit(RS.NOT_OK)
+    else:
+        args = pDict['args']
+
     #
     # Spit out the version
     #
@@ -57,118 +83,64 @@ def main():
     # List all the categories
     #
     if args.list:
-        blockNames = pDict['BlockNames']
-        print("\nDefined block categories")
-        for entry in blockNames:
-            print(f"    {entry}")
-        print("\n")
-        sys.exit(RS.OK)
+        listCategories(pDict)
         
     #
     # pull the latest block list from the master
     #
     if args.do_pull:
-        try:
-            r = requests.get(pDict['defaultMD5HashLink'])
-            if r.status_code != 200:
-                print(f"Error: {inLink} not found")
-                sys.exit(RS.NOT_OK)
-            else:
-                tmpStr = r.text
-                bits = tmpStr.split()
-                fileMd5Hash = bits[0].strip()
-                
-            r = requests.get(pDict['defaultB3Link'])
-            if r.status_code != 200:
-                print(f"Error: {inLink} not found")
-                sys.exit(RS.NOT_OK)
-            else:
-                jObj = r.json()
-                xB3Str = r.text
-                md5Obj = hashlib.md5()
-                encodeStr = xB3Str.encode()
-                md5Obj.update(encodeStr)
-                md5Sum = md5Obj.hexdigest()
+        doPull(pDict)
 
-                if md5Sum != fileMd5Hash:
-                    print("Error: file hash do not match")
-                    print(f"Hash #1: {md5Sum}")
-                    print(f"Hash #2: {fileMd5Hash}")
-                    sys.exit(RS.NOT_OK)
-                    
-                pDict['jObj'] = jObj
-        except (ConnectionError) as e:
-            BP = 0
+    if args.update_db:
+        loadDB(pDict)
+    else:
+        BP = 0
+        #saveToFile(pDict)
+    # End of else
 
-        pDict['Blocks']     = jObj['blocks']
-        pDict['latestDate'] = jObj['date']
-        
-        if args.update_db:
-            loadDB(pDict)
-        else:
-            saveToFile(pDict)
-            # End of else 
-        
     BP = 0
-    if args.block or args.do_check: 
-        from atproto import Client, models
-        from atproto.exceptions import BadRequestError
+    if args.block or args.do_check:
+        BP = 0
         
     if args.block:
         BP = 0
+        doBlock(pDict)
+        
     # Check the DB against Bluesky
     BP = 0
     if args.do_check:
-        blueSkyLogin  = pDict['blueSkyLogin']
-        blueSkyPasswd = pDict['blueSkyPasswd']
+        doCheck(pDict)
         
-        client = Client()
-        client.login(blueSkyLogin, blueSkyPasswd)
 
-        # TEST
-        a1 = client.app
-        a2 = client.app.bsky
-        a3 = client.app.bsky.graph
-        a4  = client.app.bsky.graph.block
-
-        # AppBskyGraphBlockRecord
+    if args.clear_db:
+        clearDB(pDict)
         
-        for entry in a4:
-            BP = 0
 
-        for key in pDict['Blocks']:
-            BL = pDict['Blocks'][key]
-            for entry in BL:
-                name = entry.strip()
-                if '@' in name:
-                    name = name.replace('@', '')
-                try:
-                    UD = client.get_profile(actor=name)
-                except (BadRequestError) as e:
-                    BP = 0
-                    statusCode = e.response.status_code
-                    if statusCode == 400:
-                        notFoundList.append(name)
-                        if args.debug:
-                            print(f"Account: {name} NOT found")
-                        continue
-                BP = 0
-                B3 = defineB3(UD)
-                foundList.append(name)
-                if args.debug:
-                    print(f"Account: {name} found")
-                # End of for loop
-            BP = 1
-        BP = 2
-    BP = 3
-    
-    notFoundCount = len(notFoundList)
-    foundCount    = len(foundList)
-    accountTotal = notFoundCount + foundCount
+    #notFoundCount = len(notFoundList)
+    #foundCount    = len(foundList)
+    #accountTotal = notFoundCount + foundCount
     
     sys.exit(RS.OK)
     # End of main
 
+# --------------------------------------------------------------------
+#
+# clearDB
+#
+# --------------------------------------------------------------------
+def clearDB(pDict):
+    tableName = pDict['tableName']
+    #Delete from TableName
+    query = f"delete from {tableName};"
+    prompt = "Are you sure you want to delete the contents of the DB? [y|n] "
+    if yesNo(prompt):
+        BP = 0
+    else:
+        BP = 1
+
+    return
+    # End of clearDB
+    
 # --------------------------------------------------------------------
 #
 # defineB3
@@ -201,13 +173,17 @@ def loadDB(pDict: dict):
     Args:
     Returns:
     """
-    RS = ReturnStatus
-    rDict = genReturnDict("Inside loadDB")
     
+    RS = bbblib.ReturnStatus
+    rDict = genReturnDict("Inside loadDB")
+
+    args      = pDict['args']
     jObj      = pDict['jObj']
     dbFile    = pDict['DB_FILE']
     S3        = pDict['S3']
     tableName = pDict['tableName']
+
+    doInsert = True
     
     """
     BEGIN TRANSACTION;
@@ -282,21 +258,36 @@ def loadDB(pDict: dict):
             result = cur.execute(query2).fetchall()
             if result == []:
                 # user not found
-                block_group   = key
-                handle = name
-                status       = 'block'
-                
-                query3 = (" insert into B3 (account_name, status, block_name, "
-                          " active) values ('{}', '{}', '{}', '{}'); "
-                          .format(account_name, status, block_name, active))
 
-                cur.execute(query3)
-                conn.commit()
+                now = datetime.datetime.today()
+                dateTime = now.strftime('%d-%b-%Y %H:%M:%S')
+                handle     = name
+                status     = 'new'
+                block      = 'yes'
+                mute       = 'no'
+                blockGroup = key
+                
+                #query3 = (" insert into B3 (account_name, status, block_name, "
+                #          " active) values ('{}', '{}', '{}', '{}'); "
+                #          .format(account_name, status, block_name, active))
+
+                query2 = (" insert into {} (date_time, handle, status, "
+                          " block, mute, active, block_group) values ( "
+                          " '{}', '{}', '{}', '{}', '{}', '{}', '{}'); "
+                          .format(tableName, dateTime, handle, status, block,
+                                  mute, active, blockGroup))
+
+                if args.debug:
+                    print(query2)
+
+                if doInsert:
+                    cur.execute(query2)
+                    conn.commit()
 
                 BP = 5
             else:
+                # User found
                 Bp = 6
-                B3 = defineB3(result)
             BP = 2
         BP = 3
     BP = 4
@@ -304,113 +295,6 @@ def loadDB(pDict: dict):
     return
     # End of loadDB
 
-# --------------------------------------------------------------------
-#
-# getEnvironVars
-#
-# --------------------------------------------------------------------
-def getEnvironVars(pDict):
-    """
-    Args:
-    Returns:
-    """
-
-    return initTool(pDict)
-    # End of getEnvironVars
-
-# --------------------------------------------------------------------
-#
-# genReturnDict
-#
-# --------------------------------------------------------------------
-def genReturnDict(msg = "") -> dict:
-    """
-    This sets up a dictonary that is intented to be returned from
-    a function call. The real value here is that this dictonary
-    contains information, like the function name and line number,
-    about the function. This is handy when debugging a mis-behaving
-    function.
-
-    Args:
-        msg: A text string containg a simple, short message
-
-    Returns:
-        rDict: a dictonary that is returned from a function call
-
-    """
-    RS = ReturnStatus()
-
-    rDict = {}
-
-    # These values come from the previous stack frame ie. the
-    # calling function.
-    rDict['line_number']   = sys._getframe(1).f_lineno
-    rDict['filename']      = sys._getframe(1).f_code.co_filename
-    rDict['function_name'] = sys._getframe(1).f_code.co_name
-
-    rDict['status']   = RS.OK # See the class ReturnStatus
-    rDict['msg']      = msg   # The passed in string
-    rDict['data']     = ''    # The data/json returned from func call
-    rDict['path']     = ''    # FQPath to file created by func (optional)
-    rDict['resource'] = ''    # What resource is being used (optional)
-
-    return rDict
-    # End of genReturnDict
-
-
-# --------------------------------------------------------------------
-#
-# class ReturnStatus
-#
-# --------------------------------------------------------------------
-class ReturnStatus:
-    """
-    Since we can't have nice things, like #define, this is
-    a stand in.
-
-    These values are intended to be returned from a function
-    call. For example
-
-    def bar():
-        RS = ReturnStatus()
-        rDict = genReturnDict('Demo program bar')
-
-        i = 1 + 1
-
-        if i == 2:
-            rDict['status'] = RS.OK
-        else:
-            rDict['status'] = RS.NOT_OK
-            rDict['msg'] = 'Basic math is broken'
-
-        return rDict
-
-    def foo():
-        RS = ReturnStatus()
-
-        rDict = bar()
-        if rDict['status'] = RS.OK:
-            print('All is right with the world')
-        else:
-            print('We're doomed!')
-            print(rDict['msg'])
-            sys.exit(RS.NOT_OK)
-
-        return RS.OK
-
-    """
-
-    OK         = 0 # It all worked out
-    NOT_OK     = 1 # Not so much
-    SKIP       = 2 # We are skipping this block/func
-    NOT_YET    = 3 # This block/func is not ready
-    FAIL       = 4 # It all went to hell in a handbasket
-    NOT_FOUND  = 5 # Could not find what we were looking for
-    FOUND      = 6 # Found my keys
-    YES        = 7 # Cant believe I missed these
-    NO         = 8 #
-    RESTRICTED = 9 #
-    # End of class ReturnStatus
 
 # --------------------------------------------------------------------
 #
@@ -423,11 +307,12 @@ def initTool():
     Returns:
     """
 
-    RS = ReturnStatus
-    rDict = genReturnDict("Inside getEnvironVars")
+    RS = bbblib.ReturnStatus
+    rDict = bbblib.genReturnDict("Inside initTool")
 
     pDict = {}
 
+    pDict['RS'] = RS
     pDict['S3'] = S3
     pDict['toolName'] = os.path.basename(__file__)
     pDict['version'] = __version__
@@ -485,9 +370,14 @@ def saveToFile(pDict):
     Args:
     Returns:
     """
+
+    RS = bbblib.ReturnStatus
+    rDict = bbblib.genReturnDict("Inside saveToFile")
+    
     fixedDateStr = pDict['latestDate'].replace(' ', '-')
     blockListFile = f"{pDict['DATA_PATH']}/B3BlockList.{fixedDateStr}.json"
     outStr = json.dumps(pDict['Blocks'], indent=4)
+    
     with open(blockListFile, 'w') as fh:
         fh.write(outStr)
 
@@ -497,17 +387,32 @@ def saveToFile(pDict):
     md5Sum = md5Obj.hexdigest()
     outStr = f"{md5Sum} B3BlockList.{fixedDateStr}.json\n"
     md5sumFile = f"{pDict['DATA_PATH']}/B3BlockList.{fixedDateStr}.md5sum"
+    
     with open(md5sumFile, 'w') as fh:
         fh.write(outStr)
 
     return
+    # End of saveToFile
 
+# --------------------------------------------------------------------
+#
+# processArgs
+#
+# --------------------------------------------------------------------
 def processArgs(pDict):
 
     """
     Args:
     Return:
     """
+
+    RS = bbblib.ReturnStatus
+    rDict = bbblib.genReturnDict("Inside processArgs")
+
+    nonBinaryOptions = ['block', 'mute', 'unblock', 'unmute']
+    nboCount = len(nonBinaryOptions)
+    
+    argSelectedCount = 0
     
     parser = argparse.ArgumentParser()
 
@@ -547,10 +452,229 @@ def processArgs(pDict):
                         action='store_true')
 
     args = parser.parse_args()
+    pDict['parser'] = parser
     pDict['args'] = args
 
-    return
+    trueCount  = 0
+    paramCount = 0
+    
+    totalArgCount = len(args.__dict__)
+    boCount = totalArgCount - nboCount
+    for key in args.__dict__:
+        value = args.__dict__[key]
+        
+        if key in nonBinaryOptions:
+            if value is not None:
+                BP = 0
+                paramCount += 1
+            else:
+                BP = 1
 
+            if isinstance(value, list):
+                BP = 0
+                continue
+            
+            if isinstance(value, dict):
+                BP = 1
+                continue
+        else:
+            BP = 0
+            if value is True:
+                trueCount += 1
+        #
+
+    if (trueCount == 0) and (paramCount == 0):
+        rDict['status'] = RS.NOT_FOUND
+        rDict['msg'] = 'No option selected, call help()'
+        
+    return rDict
+    # End of processArgs
+    
+# --------------------------------------------------------------------
+#
+# getUserInfo
+#
+# --------------------------------------------------------------------
+def getUserInfo(pDict):
+    RS = bbblib.ReturnStatus
+    rDict = bbblib.genReturnDict("Inside getUserInfo")
+    
+
+    blueSkyLogin  = pDict['blueSkyLogin']
+    blueSkyPasswd = pDict['blueSkyPasswd']
+
+    client = Client()
+    client.login(blueSkyLogin, blueSkyPasswd)
+
+    # UD - User Data
+    UD = client.me
+
+    ME = defineME(UD)
+    pDict['ME'] = ME
+
+    return
+    # Enf of getUserInfo
+
+# --------------------------------------------------------------------
+#
+# defineME
+#
+# --------------------------------------------------------------------
+def defineME(rDict: dict) -> dict:
+    ME = {}
+
+    for entry in rDict:
+        if isinstance(entry, tuple):
+            key   = entry[0]
+            value = entry[1]
+            ME[key] = value
+        else:
+            continue
+
+    return ME
+    # End of defineME
+
+# --------------------------------------------------------------------
+#
+# yesNo
+#
+# --------------------------------------------------------------------
+def yesNo(prompt=''):
+    returnValue = ''
+    try:
+        user_choice = input(prompt)
+        if user_choice.lower() in ['y', 'yes']:
+            returnValue = True
+        elif user_choice.lower() in ['n', 'no']:
+            returnValue = False
+        else:
+            sys.exit("Bad input, expected yes or no.")
+    except Exception as err:
+        raise type(err)('yes_no() error: {}'.format(err))
+
+    return returnValue
+    # End of yesNo
+
+# --------------------------------------------------------------------
+#
+# doPull
+#
+# --------------------------------------------------------------------
+def doPull(pDict):
+    RS = pDict['RS']
+    rDict = bbblib.genReturnDict('Inside doPull')
+    
+    try:
+        r = requests.get(pDict['defaultMD5HashLink'])
+        if r.status_code != 200:
+            print(f"Error: {inLink} not found")
+            sys.exit(RS.NOT_OK)
+        else:
+            tmpStr = r.text
+            bits = tmpStr.split()
+            fileMd5Hash = bits[0].strip()
+                
+            r = requests.get(pDict['defaultB3Link'])
+            if r.status_code != 200:
+                print(f"Error: {inLink} not found")
+                sys.exit(RS.NOT_OK)
+            else:
+                jObj = r.json()
+                xB3Str = r.text
+                md5Obj = hashlib.md5()
+                encodeStr = xB3Str.encode()
+                md5Obj.update(encodeStr)
+                md5Sum = md5Obj.hexdigest()
+
+                if md5Sum != fileMd5Hash:
+                    print("Error: file hash do not match")
+                    print(f"Hash #1: {md5Sum}")
+                    print(f"Hash #2: {fileMd5Hash}")
+                    sys.exit(RS.NOT_OK)
+                    
+                pDict['jObj'] = jObj
+            # End of else
+        # End of else
+    except (ConnectionError) as e:
+        BP = 0
+
+    pDict['Blocks']     = jObj['blocks']
+    pDict['latestDate'] = jObj['date']
+        
+    return rDict
+    # End of doPull
+
+# --------------------------------------------------------------------
+#
+# listCategories
+#
+# --------------------------------------------------------------------
+def listCategories(pDict):
+    RS = pDict['RS']
+    
+    blockNames = pDict['BlockNames']
+    print("\nDefined block categories")
+    for entry in blockNames:
+        print(f"    {entry}")
+    print("\n")
+
+    sys.exit(RS.OK)
+    # End of listCategories
+
+# --------------------------------------------------------------------
+#
+# doCheck
+#
+# --------------------------------------------------------------------
+def doCheck(pDict):
+    RS = pDict['RS']
+    rDict = bbblib.genReturnDict('Inside doCheck')
+    
+    blueSkyLogin  = pDict['blueSkyLogin']
+    blueSkyPasswd = pDict['blueSkyPasswd']
+        
+    client = Client()
+    client.login(blueSkyLogin, blueSkyPasswd)
+
+    # TEST
+    a1 = client.app
+    a2 = client.app.bsky
+    a3 = client.app.bsky.graph
+    a4  = client.app.bsky.graph.block
+
+    # AppBskyGraphBlockRecord
+        
+    #for entry in a4:
+    #    BP = 0
+
+    for key in pDict['Blocks']:
+        BL = pDict['Blocks'][key]
+        for entry in BL:
+            name = entry.strip()
+            if '@' in name:
+                name = name.replace('@', '')
+            try:
+                UD = client.get_profile(actor=name)
+            except (BadRequestError) as e:
+                BP = 0
+                statusCode = e.response.status_code
+                if statusCode == 400:
+                    notFoundList.append(name)
+                    if args.debug:
+                        print(f"Account: {name} NOT found")
+                    continue
+            BP = 0
+            B3 = defineB3(UD)
+            foundList.append(name)
+            if args.debug:
+                print(f"Account: {name} found")
+            # End of for loop
+            BP = 1
+        BP = 2
+    BP = 3
+    return rDict
+    # End of doCheck
+    
 # --------------------------------------------------------------------
 #
 # entry point
