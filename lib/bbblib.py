@@ -93,4 +93,75 @@ class ReturnStatus:
     NO         = 8  #
     RESTRICTED = 9  #
     YES_TO_ALL = 10 #
+    CALL_EXIT  = 11 # Single exit
     # End of class ReturnStatus
+
+# --------------------------------------------------------------------
+#
+# yesNo
+#
+# --------------------------------------------------------------------
+def yesNo(prompt=''):
+    """
+    Args:
+    Returns:
+    """
+    returnValue = ''
+    try:
+        user_choice = input(prompt)
+        if user_choice.lower() in ['y', 'yes']:
+            returnValue = True
+        elif user_choice.lower() in ['n', 'no']:
+            returnValue = False
+        else:
+            sys.exit("Bad input, expected yes or no.")
+    except Exception as err:
+        raise type(err)('yes_no() error: {}'.format(err))
+
+    return returnValue
+    # End of yesNo
+
+# --------------------------------------------------------------------
+#
+# defineME
+#
+# --------------------------------------------------------------------
+def defineME(rDict: dict) -> dict:
+    """
+    Args:
+    Returns:
+    """
+    ME = {}
+
+    for entry in rDict:
+        if isinstance(entry, tuple):
+            key   = entry[0]
+            value = entry[1]
+            ME[key] = value
+        else:
+            continue
+
+    return ME
+    # End of defineME
+# --------------------------------------------------------------------
+#
+# defineB3
+#
+# --------------------------------------------------------------------
+def defineB3(result: dict) -> dict:
+    """
+    Args:
+    Returns:
+    """
+    B3 = {}
+
+    FieldList = pDict['dbFieldList']
+    for index, key in enumerate(FieldList):
+        value = result[0][index]
+        if value is None:
+            value = ''
+        B3[key] = value
+        
+    return B3
+    # defineB3
+

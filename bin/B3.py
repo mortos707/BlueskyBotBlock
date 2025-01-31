@@ -11,8 +11,8 @@ B3 - BlueSky Bot Block
 # @depends: boto3, python (>=3.8)
 __author__ = 'jgrosch@gmail.com'
 __copyright__ = "Copyright (c) 2025 Josef Grosch"
-__description__ = ""
-__usage__ = ""
+__description__ = "A tool to manage blocks and mutes in Bluesky"
+__usage__ = "./B3.py --help"
 __version__ = '0.2'
 
 import os, sys
@@ -31,8 +31,8 @@ import sqlite3 as S3
 import hashlib
 import datetime
 
-from atproto import Client, models
-from atproto.exceptions import BadRequestError
+#from atproto import Client, models
+#from atproto.exceptions import BadRequestError
 
 # --------------------------------------------------------------------
 #
@@ -76,46 +76,63 @@ def main():
     # Spit out the version
     #
     if args.version:
-        print(f"{pDict['toolName']} - Version: {pDict['version']}")
-        sys.exit(RS.OK)
+        BP = 0
+        rDict = printVersion(pDict)
 
     #
     # List all the categories
     #
-    if args.list:
-        listCategories(pDict)
+    if args.list and not rDict['status'] == RS.CALL_EXIT:
+        rDict = listCategories(pDict)
         
     #
     # pull the latest block list from the master
     #
-    if args.do_pull:
-        doPull(pDict)
+    if args.doPull and not rDict['status'] == RS.CALL_EXIT:
+        BP = 0
+        rDict = doPull(pDict)
 
-    if args.update_db:
-        loadDB(pDict)
-    else:
+    #
+    #
+    #
+    if args.updateDB and not rDict['status'] == RS.CALL_EXIT:
         BP = 0
-        #saveToFile(pDict)
-    # End of else
+        rDict = updateDB(pDict)
 
-    BP = 0
-    if args.block or args.do_check:
+    #
+    #
+    #
+    if args.block or args.doCheck:
         BP = 0
-        
-    if args.block:
+
+    #
+    #
+    #
+    if args.block and not rDict['status'] == RS.CALL_EXIT:
         BP = 0
-        doBlock(pDict)
-        
+        rDict = doBlock(pDict)
+
+    #
     # Check the DB against Bluesky
-    BP = 0
-    if args.do_check:
-        doCheck(pDict)
+    #
+    if args.doCheck and not rDict['status'] == RS.CALL_EXIT:
+        BP = 0
+        rDict = doCheck(pDict)
         
+    #
+    #
+    #
+    if args.clearDB and not rDict['status'] == RS.CALL_EXIT:
+        BP = 0
+        rDict = clearDB(pDict)
 
-    if args.clear_db:
-        clearDB(pDict)
+    #
+    #
+    #
+    if args.backupDB and not rDict['status'] == RS.CALL_EXIT:
+        BP = 0
+        rDict = backupDB()
         
-
     #notFoundCount = len(notFoundList)
     #foundCount    = len(foundList)
     #accountTotal = notFoundCount + foundCount
@@ -123,59 +140,46 @@ def main():
     sys.exit(RS.OK)
     # End of main
 
+
 # --------------------------------------------------------------------
 #
 # clearDB
 #
 # --------------------------------------------------------------------
 def clearDB(pDict):
+    """
+    Args:
+    Returns:
+    """
+    RS = pDict['RS']
+    rDict = genReturnDict("Inside updateDB")
+
     tableName = pDict['tableName']
     #Delete from TableName
     query = f"delete from {tableName};"
     prompt = "Are you sure you want to delete the contents of the DB? [y|n] "
-    if yesNo(prompt):
+    if bbblib.yesNo(prompt):
         BP = 0
     else:
         BP = 1
 
-    return
+    return rDict
     # End of clearDB
-    
-# --------------------------------------------------------------------
-#
-# defineB3
-#
-# --------------------------------------------------------------------
-def defineB3(result: dict) -> dict:
-    """
-    Args:
-    Returns:
-    """
-    B3 = {}
 
-    FieldList = pDict['dbFieldList']
-    for index, key in enumerate(FieldList):
-        value = result[0][index]
-        if value is None:
-            value = ''
-        B3[key] = value
-        
-    return B3
-    # defineB3
     
 # --------------------------------------------------------------------
 #
-# loadDB
+# updateDB
 #
 # --------------------------------------------------------------------
-def loadDB(pDict: dict):
+def updateDB(pDict: dict):
     """
     Args:
     Returns:
     """
     
-    RS = bbblib.ReturnStatus
-    rDict = genReturnDict("Inside loadDB")
+    RS = pDict['RS']
+    rDict = genReturnDict("Inside updateDB")
 
     args      = pDict['args']
     jObj      = pDict['jObj']
@@ -292,8 +296,8 @@ def loadDB(pDict: dict):
         BP = 3
     BP = 4
 
-    return
-    # End of loadDB
+    return rDict
+    # End of updateDB
 
 
 # --------------------------------------------------------------------
@@ -360,6 +364,7 @@ def initTool():
     return pDict
     # End of initTool
 
+
 # --------------------------------------------------------------------
 #
 # saveToFile
@@ -371,7 +376,7 @@ def saveToFile(pDict):
     Returns:
     """
 
-    RS = bbblib.ReturnStatus
+    RS = pDict['RS']
     rDict = bbblib.genReturnDict("Inside saveToFile")
     
     fixedDateStr = pDict['latestDate'].replace(' ', '-')
@@ -391,8 +396,9 @@ def saveToFile(pDict):
     with open(md5sumFile, 'w') as fh:
         fh.write(outStr)
 
-    return
+    return rDict
     # End of saveToFile
+
 
 # --------------------------------------------------------------------
 #
@@ -406,7 +412,7 @@ def processArgs(pDict):
     Return:
     """
 
-    RS = bbblib.ReturnStatus
+    RS = pDict['RS']
     rDict = bbblib.genReturnDict("Inside processArgs")
 
     nonBinaryOptions = ['block', 'mute', 'unblock', 'unmute']
@@ -416,10 +422,10 @@ def processArgs(pDict):
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--clear_db', help='Whipe the DB clean.',
+    parser.add_argument('--clearDB', help='Whipe the DB clean.',
                         action='store_true')
 
-    parser.add_argument('--backup_db', help='Backup the DB.',
+    parser.add_argument('--backupDB', help='Backup the DB.',
                         action='store_true')
 
     parser.add_argument('--block', help='Pick a group(s) to block', nargs='+')
@@ -427,10 +433,10 @@ def processArgs(pDict):
     parser.add_argument('--debug', help='Turn on debug messages',
                         action='store_true')
 
-    parser.add_argument('--do_check', help='Check handles against Bluesky',
+    parser.add_argument('--doCheck', help='Check handles against Bluesky',
                         action='store_true')
 
-    parser.add_argument('--do_pull', help='Pull block list from SOA',
+    parser.add_argument('--doPull', help='Pull block list from SOT',
                         action='store_true')
 
     parser.add_argument('--list', help='List block categories',
@@ -442,7 +448,7 @@ def processArgs(pDict):
 
     parser.add_argument('--unmute', help='Pick a group(s) to unmute', nargs='+')
 
-    parser.add_argument('--update_db', help='Update DB with latest list',
+    parser.add_argument('--updateDB', help='Update DB with latest list',
                         action='store_true')
 
     parser.add_argument('--verbose', help='Turn on verbose output',
@@ -489,6 +495,7 @@ def processArgs(pDict):
         
     return rDict
     # End of processArgs
+
     
 # --------------------------------------------------------------------
 #
@@ -496,10 +503,18 @@ def processArgs(pDict):
 #
 # --------------------------------------------------------------------
 def getUserInfo(pDict):
-    RS = bbblib.ReturnStatus
+    """
+    Args:
+    Returns:
+    """
+    RS = pDict['RS']
     rDict = bbblib.genReturnDict("Inside getUserInfo")
-    
 
+    if pDict['BSLib'] == RS.NO:
+        from atproto import Client, models
+        from atproto.exceptions import BadRequestError
+        pDict['BSLib_loaded'] = RS.YES
+    
     blueSkyLogin  = pDict['blueSkyLogin']
     blueSkyPasswd = pDict['blueSkyPasswd']
 
@@ -509,51 +524,12 @@ def getUserInfo(pDict):
     # UD - User Data
     UD = client.me
 
-    ME = defineME(UD)
+    ME = bbblib.defineME(UD)
     pDict['ME'] = ME
 
-    return
+    return rDict
     # Enf of getUserInfo
 
-# --------------------------------------------------------------------
-#
-# defineME
-#
-# --------------------------------------------------------------------
-def defineME(rDict: dict) -> dict:
-    ME = {}
-
-    for entry in rDict:
-        if isinstance(entry, tuple):
-            key   = entry[0]
-            value = entry[1]
-            ME[key] = value
-        else:
-            continue
-
-    return ME
-    # End of defineME
-
-# --------------------------------------------------------------------
-#
-# yesNo
-#
-# --------------------------------------------------------------------
-def yesNo(prompt=''):
-    returnValue = ''
-    try:
-        user_choice = input(prompt)
-        if user_choice.lower() in ['y', 'yes']:
-            returnValue = True
-        elif user_choice.lower() in ['n', 'no']:
-            returnValue = False
-        else:
-            sys.exit("Bad input, expected yes or no.")
-    except Exception as err:
-        raise type(err)('yes_no() error: {}'.format(err))
-
-    return returnValue
-    # End of yesNo
 
 # --------------------------------------------------------------------
 #
@@ -561,6 +537,10 @@ def yesNo(prompt=''):
 #
 # --------------------------------------------------------------------
 def doPull(pDict):
+    """
+    Args:
+    Returns:
+    """
     RS = pDict['RS']
     rDict = bbblib.genReturnDict('Inside doPull')
     
@@ -604,13 +584,19 @@ def doPull(pDict):
     return rDict
     # End of doPull
 
+
 # --------------------------------------------------------------------
 #
 # listCategories
 #
 # --------------------------------------------------------------------
 def listCategories(pDict):
+    """
+    Args:
+    Returns:
+    """
     RS = pDict['RS']
+    rDict = bbblib.genReturnDict('Inside doCheck')
     
     blockNames = pDict['BlockNames']
     print("\nDefined block categories")
@@ -618,8 +604,12 @@ def listCategories(pDict):
         print(f"    {entry}")
     print("\n")
 
-    sys.exit(RS.OK)
+    rDict['status'] = RS.CALL_EXIT
+    rDict['msg'] = 'Call exit'
+    
+    return rDict
     # End of listCategories
+
 
 # --------------------------------------------------------------------
 #
@@ -627,8 +617,17 @@ def listCategories(pDict):
 #
 # --------------------------------------------------------------------
 def doCheck(pDict):
+    """
+    Args:
+    Returns:
+    """
     RS = pDict['RS']
     rDict = bbblib.genReturnDict('Inside doCheck')
+
+    if pDict['BSLib'] == RS.NO:
+        from atproto import Client, models
+        from atproto.exceptions import BadRequestError
+        pDict['BSLib_loaded'] = RS.YES
     
     blueSkyLogin  = pDict['blueSkyLogin']
     blueSkyPasswd = pDict['blueSkyPasswd']
@@ -637,10 +636,10 @@ def doCheck(pDict):
     client.login(blueSkyLogin, blueSkyPasswd)
 
     # TEST
-    a1 = client.app
-    a2 = client.app.bsky
-    a3 = client.app.bsky.graph
-    a4  = client.app.bsky.graph.block
+    #a1 = client.app
+    #a2 = client.app.bsky
+    #a3 = client.app.bsky.graph
+    #a4  = client.app.bsky.graph.block
 
     # AppBskyGraphBlockRecord
         
@@ -664,7 +663,7 @@ def doCheck(pDict):
                         print(f"Account: {name} NOT found")
                     continue
             BP = 0
-            B3 = defineB3(UD)
+            B3 = bbblib.defineB3(UD)
             foundList.append(name)
             if args.debug:
                 print(f"Account: {name} found")
@@ -674,6 +673,38 @@ def doCheck(pDict):
     BP = 3
     return rDict
     # End of doCheck
+
+# --------------------------------------------------------------------
+#
+# backupDB
+#
+# --------------------------------------------------------------------
+def backupDB(pDict):
+    RS = pDict['RS']
+    rDict = bbblib.genReturnDict('Inside doCheck')
+
+    rDict['status'] = RS.CALL_EXIT
+    
+    return rDict
+
+# --------------------------------------------------------------------
+#
+# printVersion
+#
+# --------------------------------------------------------------------
+def printVersion(pDict):
+    RS = pDict['RS']
+    rDict = bbblib.genReturnDict('Inside doCheck')
+
+    toolName = pDict['toolName']
+    version  = pDict['version']
+
+    print(f"{toolName} - Version: {version}")
+    
+    rDict['status'] = RS.CALL_EXIT
+    
+    return rDict
+    #
     
 # --------------------------------------------------------------------
 #
