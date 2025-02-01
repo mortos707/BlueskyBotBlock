@@ -93,20 +93,21 @@ def main():
         rDict = doPull(pDict)
 
     #
-    #
+    # Update the DB
     #
     if args.updateDB and not rDict['status'] == RS.CALL_EXIT:
         BP = 0
+        rDict = doPull(pDict)
         rDict = updateDB(pDict)
 
     #
-    #
+    # hmmmmm not sure here
     #
     if args.block or args.doCheck:
         BP = 0
 
     #
-    #
+    # Block handles
     #
     if args.block and not rDict['status'] == RS.CALL_EXIT:
         BP = 0
@@ -120,14 +121,14 @@ def main():
         rDict = doCheck(pDict)
         
     #
-    #
+    # Truncate the DB
     #
     if args.clearDB and not rDict['status'] == RS.CALL_EXIT:
         BP = 0
         rDict = clearDB(pDict)
 
     #
-    #
+    # Make a backup of the DB
     #
     if args.backupDB and not rDict['status'] == RS.CALL_EXIT:
         BP = 0
@@ -179,13 +180,15 @@ def updateDB(pDict: dict):
     """
     
     RS = pDict['RS']
-    rDict = genReturnDict("Inside updateDB")
+    rDict = bbblib.genReturnDict("Inside updateDB")
 
     args      = pDict['args']
     jObj      = pDict['jObj']
     dbFile    = pDict['DB_FILE']
     S3        = pDict['S3']
     tableName = pDict['tableName']
+    
+    blockGroup = ''
 
     doInsert = True
     
@@ -243,8 +246,10 @@ def updateDB(pDict: dict):
                     conn.commit()
             except (S3.OperationalError) as e:
                 BP = 0
-    except (S3.OperationalError) as e:
+    except (S3.OperationalError) as er:
         BP = 1
+        print(er.sqlite_errorcode)  # Prints 275
+        print(er.sqlite_errorname) 
         
     Blocks = jObj['blocks']
     for key in Blocks:
@@ -256,6 +261,12 @@ def updateDB(pDict: dict):
         BL = Blocks[key]
         for entry in BL:
             name = entry.strip()
+            if 'NONE' in name:
+                BP = 0
+                if args.debug:
+                    print(f"Block group {key} is empty")
+                continue
+            
             if '@' in name:
                 name = name.replace('@', '')
             query2 = f" select * from {tableName} where handle = \'{name}\';"
@@ -271,29 +282,34 @@ def updateDB(pDict: dict):
                 mute       = 'no'
                 blockGroup = key
                 
-                #query3 = (" insert into B3 (account_name, status, block_name, "
-                #          " active) values ('{}', '{}', '{}', '{}'); "
-                #          .format(account_name, status, block_name, active))
-
-                query2 = (" insert into {} (date_time, handle, status, "
+                query3 = (" insert into {} (date_time, handle, status, "
                           " block, mute, active, block_group) values ( "
                           " '{}', '{}', '{}', '{}', '{}', '{}', '{}'); "
                           .format(tableName, dateTime, handle, status, block,
                                   mute, active, blockGroup))
 
                 if args.debug:
-                    print(query2)
+                    #print(query2)
+                    print(f"Handle {name} has been added to block group {key}")
 
                 if doInsert:
-                    cur.execute(query2)
+                    cur.execute(query3)
                     conn.commit()
 
                 BP = 5
             else:
                 # User found
                 Bp = 6
+                resultCount = len(result)
+                if resultCount > 1:
+                    BP = 0
+                if args.debug:
+                    print(f"Handle {name} found in block group {key}")
+            # End of if / else
             BP = 2
+        # End of for loop
         BP = 3
+    # End of for loop
     BP = 4
 
     return rDict
@@ -318,6 +334,7 @@ def initTool():
 
     pDict['RS'] = RS
     pDict['S3'] = S3
+    pDict['BSLib_loaded'] = RS.NO
     pDict['toolName'] = os.path.basename(__file__)
     pDict['version'] = __version__
 
@@ -510,7 +527,7 @@ def getUserInfo(pDict):
     RS = pDict['RS']
     rDict = bbblib.genReturnDict("Inside getUserInfo")
 
-    if pDict['BSLib'] == RS.NO:
+    if pDict['BSLib_loaded'] == RS.NO:
         from atproto import Client, models
         from atproto.exceptions import BadRequestError
         pDict['BSLib_loaded'] = RS.YES
@@ -704,8 +721,27 @@ def printVersion(pDict):
     rDict['status'] = RS.CALL_EXIT
     
     return rDict
-    #
-    
+    # End of printVersion
+
+# --------------------------------------------------------------------
+#
+# createTableAsNeeded
+#
+# --------------------------------------------------------------------
+def createTableAsNeeded(pDict):
+    RS = pDict['RS']
+    rDict = bbblib.genReturnDict("Inside updateDB")
+
+    args      = pDict['args']
+    jObj      = pDict['jObj']
+    dbFile    = pDict['DB_FILE']
+    S3        = pDict['S3']
+    tableName = pDict['tableName']
+
+
+    return
+    # End of createTableAsNeeded
+
 # --------------------------------------------------------------------
 #
 # entry point
